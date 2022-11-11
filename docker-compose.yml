@@ -1,0 +1,189 @@
+# For more information: https://laravel.com/docs/sail
+version: '3'
+services:
+    ## APP
+    laravel.test:
+        env_file:
+            - ./application/.env
+        build:
+            context: ./application/.docker
+            dockerfile: Dockerfile
+            args:
+                WWWGROUP: '${WWWGROUP}'
+        image: sail-8.1/app
+        
+        extra_hosts:
+            - 'host.docker.internal:host-gateway'
+        ports:
+            - '${APP_PORT:-80}:80'
+            - '${VITE_PORT:-5173}:${VITE_PORT:-5173}'
+        environment:
+            LARAVEL_SAIL: 1
+            XDEBUG_MODE: '${SAIL_XDEBUG_MODE:-off}'
+            XDEBUG_CONFIG: '${SAIL_XDEBUG_CONFIG:-client_host=host.docker.internal}'
+            FTP_USER_NAME: '${FTP_USER_NAME:-ftp}'
+            FTP_USER_PASS: '${FTP_USER_PASS:-changeme}'
+            FTP_USER_HOME: '${FTP_USER_HOME:-/home/ftp}'
+            FTP_HOST: '${FTP_HOST:-ftpd_server}'
+        volumes:
+            - './application:/var/www/html'
+        networks:
+            - sail
+            
+    ## KAFKA
+    zookeper:
+        env_file:
+            - ./application/.env
+        image: confluentinc/cp-zookeeper:latest
+        ports:
+            - "2185:2181"
+        environment:
+            ZOOKEEPER_CLIENT_PORT: '2181'
+        volumes:
+            - "./kafka/zookeeper/data:/var/lib/zookeeper/data"
+            - "./kafka/zookeeper/log:/var/lib/zookeeper/log"
+            - "./kafka/zookeeper/secrets:/var/lib/zookeeper/secrets"
+        networks:
+            - sail
+
+    kafka:
+        env_file:
+            - ./application/.env
+        image: confluentinc/cp-kafka:latest
+        environment:
+            KAFKA_ZOOKEEPER_CONNECT: 'zookeper:2181'
+            KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:9092'
+            KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: '1'
+        depends_on:
+            - zookeper
+        volumes:
+            - "./kafka/kafka/data:/var/lib/kafka/data"
+            - "./kafka/kafka/secrets:/var/lib/kafka/secrets"
+        networks:
+            - sail
+
+    init-kafka:
+        env_file:
+            - ./application/.env
+        image: confluentinc/cp-kafka:latest
+        depends_on:
+            - kafka
+        entrypoint: [ '/bin/sh', '-c' ]
+        command: |
+            "
+            # blocks until kafka is reachable
+            kafka-topics --bootstrap-server $KAFKA_BROKERS --list
+
+            echo -e 'Creating kafka topics'
+            kafka-topics --bootstrap-server $KAFKA_BROKERS --create --if-not-exists --topic $KAFKA_PROCESS_TOPIC --replication-factor 1 --partitions 3
+            
+            echo -e 'Successfully created the following topics:'
+            kafka-topics --bootstrap-server $KAFKA_BROKERS --list
+            "
+        networks:
+            - sail
+
+    ## DB
+    pgsql:
+        env_file:
+            - ./application/.env
+        image: postgres:13
+        ports:
+            - '${FORWARD_DB_PORT:-5432}:5432'
+        environment:
+            PGPASSWORD: '${DB_PASSWORD:-secret}'
+            POSTGRES_DB: '${DB_DATABASE}'
+            POSTGRES_USER: '${DB_USERNAME}'
+            POSTGRES_PASSWORD: '${DB_PASSWORD:-secret}'
+        volumes:
+            - './db/sailpostgresql:/var/lib/postgresql/data'
+        networks:
+            - sail
+
+    ## STORAGE
+    ftpd_server:
+        env_file:
+            - ./application/.env
+        image: stilliard/pure-ftpd
+        container_name: pure-ftpd
+        ports:
+            - "21:21"
+            - "30000-30009:30000-30009"
+        volumes:
+            - "./storage/data:/home/ftp/"
+            - "./storage/passwd:/etc/pure-ftpd/passwd"
+        environment:
+            PUBLICHOST: "ftpd_server"
+            FTP_USER_NAME: '${FTP_USER_NAME:-ftp}'
+            FTP_USER_PASS: '${FTP_USER_PASS:-changeme}'
+            FTP_USER_HOME: '${FTP_USER_HOME:-/home/ftp}'
+        networks:
+            - sail
+
+    ## PROCESSOR
+    processor:
+        env_file:
+            - .env
+        build:
+            context: ./processor
+            dockerfile: Dockerfile
+        image: node-js-processor-image
+        depends_on:
+            - init-kafka
+            - pgsql
+            - status
+        container_name: processor
+        volumes:
+            - "./processor:/app"
+        networks:
+            - sail
+
+    ## STATUS
+    status:
+        env_file:
+            - .env
+        build:
+            context: ./status
+            dockerfile: Dockerfile
+        image: node-js-status-image
+        ports:
+            - "3000:3000"
+        container_name: status
+        volumes:
+            - "./status:/app"
+        networks:
+            - sail
+        
+networks:
+    sail:
+        driver: bridge
+
+### kafka-console-producer --topic ret --bootstrap-server localhost:9092
+
+####
+
+# Quick Install Steps:
+# 
+# Step 1 Install PHP pecl and pear commands:
+# 
+# sudo apt install php-pear
+# Step 2 Install librdkafka
+# 
+# sudo apt-get install -y librdkafka-dev
+# Step 3 Install PECL-package
+# 
+# sudo pecl install rdkafka
+# Step4 Enable PHP-extension in PHP config. Add to php.ini
+# 
+# sudo nano /etc/php/7.4/cli/php.ini
+# 
+# extension=rdkafka.so
+# Step 4 Restart apache server
+# 
+# sudo service apache2 restart
+
+# composer require mateusjunges/laravel-kafka
+#####
+
+
+####TODO: criar interface pra upload com o status de processamento
