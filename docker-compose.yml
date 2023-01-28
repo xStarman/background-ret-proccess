@@ -151,6 +151,7 @@ services:
         container_name: status
         volumes:
             - "./status:/app"
+            - "/app/node_modules"
         networks:
             - sail
         
