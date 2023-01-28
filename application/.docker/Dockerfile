@@ -47,6 +47,13 @@ RUN apt-get update \
     && apt-get -y autoremove \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    
+#install rdkafka 
+RUN apt update
+RUN apt install php-pear
+RUN apt-get update
+RUN apt-get install -y librdkafka-dev
+RUN pecl install rdkafka
 
 RUN setcap "cap_net_bind_service=+ep" /usr/bin/php8.1
 
@@ -60,10 +67,5 @@ RUN chmod +x /usr/local/bin/start-container
 RUN echo "extension=rdkafka.so" >> /etc/php/8.1/cli/php.ini
 
 EXPOSE 8000
-
-RUN apt update
-RUN apt install php-pear
-RUN apt-get install -y librdkafka-dev
-RUN pecl install rdkafka
 
 ENTRYPOINT ["start-container"]
